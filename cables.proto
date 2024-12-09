@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package cables;
+option go_package = "cables/generated;cables";
+
+service CablesService
+{
+	rpc Hook(stream Message) returns (stream Message) {}
+}
+
+message Message
+{
+	bytes message = 1 [json_name = "message"];
+	int64 qos = 2 [json_name = "qos"];
+}
