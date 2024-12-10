@@ -10,7 +10,8 @@ import (
 
 type cablesServer struct {
 	pb.UnimplementedCablesServiceServer
-	consumers []*Consumer
+	consumers      []*Consumer
+	consumerGroups map[string][]*Consumer
 }
 
 type Consumer struct {
@@ -32,7 +33,9 @@ func (s *cablesServer) processClientConfig(config *cables.CablesClientConfig, st
 			Topics:        config.ConsumeTopics,
 			ReturnStream:  stream,
 		}
+
 		s.consumers = append(s.consumers, newConsumer)
+		s.consumerGroups[config.ConsumerGroup] = append(s.consumerGroups[config.ConsumerGroup], newConsumer)
 	}
 }
 
@@ -41,13 +44,22 @@ func (s *cablesServer) Cleanup() {
 	for _, consumer := range s.consumers {
 		if consumer.ReturnStream.Context().Err() == nil {
 			aliveConsumers = append(aliveConsumers, consumer)
+		} else {
+			remainingInGroup := []*Consumer{}
+			for _, c := range s.consumerGroups[consumer.ConsumerGroup] {
+				if c != consumer {
+					remainingInGroup = append(remainingInGroup, c)
+				}
+			}
+			s.consumerGroups[consumer.ConsumerGroup] = remainingInGroup
+			fmt.Printf("Consumer Removed (%v) from group: %v\n", consumer.Name, consumer.ConsumerGroup)
 		}
 	}
 	s.consumers = aliveConsumers
 }
 
 func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
-	fmt.Println("Connection Established")
+	defer s.Cleanup()
 	configMessage, errConfig := stream.Recv()
 	var config cables.CablesClientConfig
 	json.Unmarshal(configMessage.GetMessage(), &config)
@@ -55,16 +67,16 @@ func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
 	if errConfig != nil {
 		return errConfig
 	}
+	fmt.Printf("Connection Established: %v\n", config.ClientName)
 	for {
 		in, err := stream.Recv()
 		if err == io.EOF {
-			// TODO: resolve client remove bug
-			s.Cleanup()
 			return nil
 		}
 		if err != nil {
 			return err
 		}
+		// TODO: Respect QoS definitions
 		s.ProcessPublished(in)
 	}
 }
@@ -91,5 +103,8 @@ func (s *cablesServer) ProcessPublished(message *pb.Message) error {
 }
 
 func NewCablesServer() *cablesServer {
-	return &cablesServer{}
+	return &cablesServer{
+		consumers:      []*Consumer{},
+		consumerGroups: map[string][]*Consumer{},
+	}
 }

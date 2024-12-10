@@ -4,6 +4,7 @@ import (
 	pb "cables/generated"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -55,13 +56,22 @@ func (c *CablesClient) Close() {
 }
 
 func (c *CablesClient) Publish(message *pb.Message) error {
+	// TODO: Fix bug where program exists before publishes finish
 	c.PublishChannel <- message
 	return nil
 }
 
-func (c *CablesClient) Hook() error {
+func (c *CablesClient) Poll(ctx context.Context) {
+	for {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return
+		}
+	}
+}
+
+func (c *CablesClient) Hook(ctx context.Context) error {
 	opts := []grpc.CallOption{}
-	stream, err := c.client.Hook(context.Background(), opts...)
+	stream, err := c.client.Hook(ctx, opts...)
 	if err != nil {
 		return err
 	}
@@ -93,9 +103,18 @@ func (c *CablesClient) Hook() error {
 			if err != nil {
 				log.Fatalf("Failed to receive a note: %v", err)
 			}
-			errHandle := c.handleFunc(in)
-			if errHandle != nil {
-				log.Fatalf("Error in message processing: %v", errHandle)
+			if in.GetQos() != 3 {
+				go func() {
+					errHandle := c.handleFunc(in)
+					if errHandle != nil {
+						log.Fatalf("Error in message processing: %v", errHandle)
+					}
+				}()
+			} else {
+				errHandle := c.handleFunc(in)
+				if errHandle != nil {
+					log.Fatalf("Error in message processing: %v", errHandle)
+				}
 			}
 		}
 	}()
