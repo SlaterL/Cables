@@ -12,4 +12,5 @@ message Message
 {
 	bytes message = 1 [json_name = "message"];
 	int64 qos = 2 [json_name = "qos"];
+	string topic = 3;
 }
