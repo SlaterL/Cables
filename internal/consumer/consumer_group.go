@@ -51,6 +51,8 @@ func (c *ConsumerGroup) RemoveConsumer(con *Consumer) {
 }
 
 func (c *ConsumerGroup) ConsumerOfTopic(topic string) *Consumer {
+	// TODO: Bug trying to publish to removed consumers,
+	// likely not cleaning up pointers on removal
 	cur := c.Consumers.head
 	var prev *Node
 	for cur != nil {
