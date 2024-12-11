@@ -6,67 +6,67 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"cables/internal/consumer"
 )
+
+var ackMessage = &pb.Message{Message: []byte("ACK")}
 
 type cablesServer struct {
 	pb.UnimplementedCablesServiceServer
-	consumers      []*Consumer
-	consumerGroups map[string][]*Consumer
+	consumerGroups map[string]*consumer.ConsumerGroup
 }
 
-type Consumer struct {
-	Name          string
-	ReturnStream  pb.CablesService_HookServer
-	ConsumerGroup string
-	Topics        []string
-}
+func (s *cablesServer) allConsumers() []*consumer.Consumer {
+	consumers := []*consumer.Consumer{}
+	for _, group := range s.consumerGroups {
+		consumers = append(consumers, group.AllConsumers()...)
+	}
 
-func (c *Consumer) Consume(message *pb.Message) error {
-	return c.ReturnStream.Send(message)
+	return consumers
 }
 
 func (s *cablesServer) processClientConfig(config *cables.CablesClientConfig, stream pb.CablesService_HookServer) {
 	if config.CanConsume {
-		newConsumer := &Consumer{
+		newConsumer := &consumer.Consumer{
 			Name:          config.ClientName,
 			ConsumerGroup: config.ConsumerGroup,
 			Topics:        config.ConsumeTopics,
 			ReturnStream:  stream,
 		}
 
-		s.consumers = append(s.consumers, newConsumer)
-		s.consumerGroups[config.ConsumerGroup] = append(s.consumerGroups[config.ConsumerGroup], newConsumer)
+		if s.consumerGroups[config.ConsumerGroup] == nil {
+			s.consumerGroups[config.ConsumerGroup] = consumer.NewConsumerGroup(config.ConsumerGroup)
+		}
+		s.consumerGroups[config.ConsumerGroup].AddConsumer(newConsumer)
 	}
 }
 
 func (s *cablesServer) Cleanup() {
-	var aliveConsumers []*Consumer
-	for _, consumer := range s.consumers {
-		if consumer.ReturnStream.Context().Err() == nil {
-			aliveConsumers = append(aliveConsumers, consumer)
-		} else {
-			remainingInGroup := []*Consumer{}
-			for _, c := range s.consumerGroups[consumer.ConsumerGroup] {
-				if c != consumer {
-					remainingInGroup = append(remainingInGroup, c)
-				}
-			}
-			s.consumerGroups[consumer.ConsumerGroup] = remainingInGroup
-			fmt.Printf("Consumer Removed (%v) from group: %v\n", consumer.Name, consumer.ConsumerGroup)
+	for _, con := range s.allConsumers() {
+		if con.ReturnStream.Context().Err() != nil {
+			s.consumerGroups[con.ConsumerGroup].RemoveConsumer(con)
+			fmt.Printf("Consumer Removed (%v) from group: %v\n", con.Name, con.ConsumerGroup)
 		}
 	}
-	s.consumers = aliveConsumers
 }
 
 func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
 	defer s.Cleanup()
 	configMessage, errConfig := stream.Recv()
-	var config cables.CablesClientConfig
-	json.Unmarshal(configMessage.GetMessage(), &config)
-	s.processClientConfig(&config, stream)
 	if errConfig != nil {
 		return errConfig
 	}
+
+	var config cables.CablesClientConfig
+	errUnmarshal := json.Unmarshal(configMessage.GetMessage(), &config)
+	if errUnmarshal != nil {
+		return errUnmarshal
+	}
+
+	s.processClientConfig(&config, stream)
+	stream.Send(ackMessage)
+
 	fmt.Printf("Connection Established: %v\n", config.ClientName)
 	for {
 		in, err := stream.Recv()
@@ -81,22 +81,15 @@ func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
 	}
 }
 
-func StringInSlice(s string, list []string) bool {
-	for _, item := range list {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *cablesServer) ProcessPublished(message *pb.Message) error {
-	for _, consumer := range s.consumers {
-		if StringInSlice(message.GetTopic(), consumer.Topics) {
-			errConsume := consumer.Consume(message)
-			if errConsume != nil {
-				return errConsume
-			}
+	for _, group := range s.consumerGroups {
+		con := group.ConsumerOfTopic(message.GetTopic())
+		if con == nil {
+			return nil
+		}
+		errConsume := con.Consume(message)
+		if errConsume != nil {
+			return errConsume
 		}
 	}
 	return nil
@@ -104,7 +97,6 @@ func (s *cablesServer) ProcessPublished(message *pb.Message) error {
 
 func NewCablesServer() *cablesServer {
 	return &cablesServer{
-		consumers:      []*Consumer{},
-		consumerGroups: map[string][]*Consumer{},
+		consumerGroups: map[string]*consumer.ConsumerGroup{},
 	}
 }

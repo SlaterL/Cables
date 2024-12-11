@@ -26,6 +26,7 @@ type CablesClientConfig struct {
 	ConsumerGroup string   `json:"consumer_group,omitempty"`
 	ConsumeTopics []string `json:"consume_topics,omitempty"`
 	CanConsume    bool     `json:"can_consume,omitempty"`
+	CanPublish    bool     `json:"can_publish,omitempty"`
 }
 
 func NewClient(config *CablesClientConfig, handleFunc func(*pb.Message) error) *CablesClient {
@@ -69,29 +70,7 @@ func (c *CablesClient) Poll(ctx context.Context) {
 	}
 }
 
-func (c *CablesClient) Hook(ctx context.Context) error {
-	opts := []grpc.CallOption{}
-	stream, err := c.client.Hook(ctx, opts...)
-	if err != nil {
-		return err
-	}
-	configBytes, errConfig := json.Marshal(c.config)
-	if errConfig != nil {
-		return errConfig
-	}
-
-	stream.Send(&pb.Message{
-		Message: configBytes,
-		Qos:     1,
-	})
-	// Publish
-	go func() {
-		for message := range c.PublishChannel {
-			stream.Send(message)
-		}
-	}()
-
-	// Consume
+func (c *CablesClient) startConsumer(stream pb.CablesService_HookClient) {
 	go func() {
 		for {
 			in, err := stream.Recv()
@@ -118,6 +97,50 @@ func (c *CablesClient) Hook(ctx context.Context) error {
 			}
 		}
 	}()
+}
+
+func (c *CablesClient) startPublisher(stream pb.CablesService_HookClient) {
+	go func() {
+		for message := range c.PublishChannel {
+			stream.Send(message)
+		}
+	}()
+}
+
+// Hook establishes a stream connection with the server.
+// It enables publish and consume functionality. Main thread
+// execution is blocked by Hook, so throw it in a goroutine
+// if you need to access the publish method from main.
+func (c *CablesClient) Hook(ctx context.Context) error {
+	opts := []grpc.CallOption{}
+	stream, err := c.client.Hook(ctx, opts...)
+	if err != nil {
+		return err
+	}
+	configBytes, errConfig := json.Marshal(c.config)
+	if errConfig != nil {
+		return errConfig
+	}
+
+	stream.Send(&pb.Message{
+		Message: configBytes,
+		Qos:     1,
+	})
+	configConf, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if string(configConf.Message) != "ACK" {
+		return fmt.Errorf("Client was could not be configured correctly with the server")
+	}
+
+	if c.config.CanPublish {
+		c.startPublisher(stream)
+	}
+
+	if c.config.CanConsume {
+		c.startConsumer(stream)
+	}
 
 	<-c.quitCh
 	fmt.Println("Exiting Hook")
