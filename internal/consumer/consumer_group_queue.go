@@ -1,21 +1,23 @@
 package consumer
 
-type ConsumerGroup struct {
+import pb "cables/generated"
+
+type ConsumerGroupQueue struct {
 	Name      string
 	Consumers ConsumerQueue
 }
 
-// Returns a new ConsumerGroup. Only one consumer per
+// Returns a new ConsumerGroupQueue. Only one consumer per
 // group will recieve a copy of a published message.
 // This allows for multiple instances of a handler to
 // run without duplication of work.
-func NewConsumerGroup(name string) *ConsumerGroup {
-	return &ConsumerGroup{
+func NewConsumerGroupQueue(name string) *ConsumerGroupQueue {
+	return &ConsumerGroupQueue{
 		Name: name,
 	}
 }
 
-func (c *ConsumerGroup) AllConsumers() []*Consumer {
+func (c *ConsumerGroupQueue) All() []*Consumer {
 	consumers := []*Consumer{}
 	cur := c.Consumers.head
 
@@ -27,14 +29,15 @@ func (c *ConsumerGroup) AllConsumers() []*Consumer {
 	return consumers
 }
 
-func (c *ConsumerGroup) AddConsumer(con *Consumer) {
+func (c *ConsumerGroupQueue) Add(con *Consumer) error {
 	c.Consumers.Add(con)
+	return nil
 }
 
-func (c *ConsumerGroup) RemoveConsumer(con *Consumer) {
+func (c *ConsumerGroupQueue) Remove(con *Consumer) error {
 	prevNode := c.Consumers.head
 	if prevNode == nil {
-		return
+		return nil
 	}
 	if prevNode.Value == con {
 		c.Consumers.PopFront()
@@ -43,30 +46,33 @@ func (c *ConsumerGroup) RemoveConsumer(con *Consumer) {
 	for curNode != nil {
 		if curNode.Value == con {
 			prevNode.Next = curNode.Next
-			return
+			return nil
 		}
 		prevNode = curNode
 		curNode = prevNode.Next
 	}
+	return nil
 }
 
-func (c *ConsumerGroup) ConsumerOfTopic(topic string) *Consumer {
+func (c *ConsumerGroupQueue) ProcessMessage(m *pb.Message) error {
 	// TODO: Bug trying to publish to removed consumers,
 	// likely not cleaning up pointers on removal
 	cur := c.Consumers.head
 	var prev *Node
 	for cur != nil {
-		if containsString(cur.Value.Topics, topic) {
+		if containsString(cur.Value.Topics, m.Topic) {
 			val := cur.Value
 			if prev != nil {
 				prev.Next = cur.Next
 				c.Consumers.tail = cur
+				cur.Next = nil
 			} else if cur.Next != nil {
 				c.Consumers.head = cur.Next
 				c.Consumers.tail.Next = cur
 				c.Consumers.tail = cur
+				cur.Next = nil
 			}
-			return val
+			return val.Consume(m)
 		}
 		prev = cur
 		cur = cur.Next

@@ -22,11 +22,12 @@ type CablesClient struct {
 }
 
 type CablesClientConfig struct {
-	ClientName    string   `json:"client_name,omitempty"`
-	ConsumerGroup string   `json:"consumer_group,omitempty"`
-	ConsumeTopics []string `json:"consume_topics,omitempty"`
-	CanConsume    bool     `json:"can_consume,omitempty"`
-	CanPublish    bool     `json:"can_publish,omitempty"`
+	ClientName        string   `json:"client_name,omitempty"`
+	ConsumerGroup     string   `json:"consumer_group,omitempty"`
+	ConsumeTopics     []string `json:"consume_topics,omitempty"`
+	CanConsume        bool     `json:"can_consume,omitempty"`
+	CanPublish        bool     `json:"can_publish,omitempty"`
+	ConsumerGroupType int      `json:"client_type,omitempty"`
 }
 
 func NewClient(config *CablesClientConfig, handleFunc func(*pb.Message) error) *CablesClient {
@@ -82,18 +83,9 @@ func (c *CablesClient) startConsumer(stream pb.CablesService_HookClient) {
 			if err != nil {
 				log.Fatalf("Failed to receive a note: %v", err)
 			}
-			if in.GetQos() != 3 {
-				go func() {
-					errHandle := c.handleFunc(in)
-					if errHandle != nil {
-						log.Fatalf("Error in message processing: %v", errHandle)
-					}
-				}()
-			} else {
-				errHandle := c.handleFunc(in)
-				if errHandle != nil {
-					log.Fatalf("Error in message processing: %v", errHandle)
-				}
+			errHandle := c.handleFunc(in)
+			if errHandle != nil {
+				log.Fatalf("Error in message processing: %v", errHandle)
 			}
 		}
 	}()
