@@ -41,7 +41,7 @@ func TestListEq_Fail(t *testing.T) {
 func TestConsumerClassic_Add(t *testing.T) {
 	t.Parallel()
 
-	cg := NewConsumerGroupClassic("testCG", []string{"t1", "t2"})
+	cg := NewConsumerGroup("testCG", []string{"t1", "t2"})
 	cPass := &Consumer{
 		Name:   "testCPass",
 		Topics: []string{"t1", "t2"},
@@ -60,7 +60,7 @@ func TestConsumerClassic_Add(t *testing.T) {
 func TestConsumerClassic_Remove(t *testing.T) {
 	t.Parallel()
 
-	cg := NewConsumerGroupClassic("testCG", []string{"t1", "t2"})
+	cg := NewConsumerGroup("testCG", []string{"t1", "t2"})
 	c1 := &Consumer{
 		Name:   "testC1",
 		Topics: []string{"t1", "t2"},

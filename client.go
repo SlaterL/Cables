@@ -22,12 +22,11 @@ type CablesClient struct {
 }
 
 type CablesClientConfig struct {
-	ClientName        string   `json:"client_name,omitempty"`
-	ConsumerGroup     string   `json:"consumer_group,omitempty"`
-	ConsumeTopics     []string `json:"consume_topics,omitempty"`
-	CanConsume        bool     `json:"can_consume,omitempty"`
-	CanPublish        bool     `json:"can_publish,omitempty"`
-	ConsumerGroupType int      `json:"client_type,omitempty"`
+	ClientName    string   `json:"client_name,omitempty"`
+	ConsumerGroup string   `json:"consumer_group,omitempty"`
+	ConsumeTopics []string `json:"consume_topics,omitempty"`
+	CanConsume    bool     `json:"can_consume,omitempty"`
+	CanPublish    bool     `json:"can_publish,omitempty"`
 }
 
 func NewClient(config *CablesClientConfig, handleFunc func(*pb.Message) error) *CablesClient {

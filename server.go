@@ -1,27 +1,25 @@
-package main
+package cables
 
 import (
-	"cables"
 	pb "cables/generated"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net"
 
 	"cables/internal/consumer"
+
+	"google.golang.org/grpc"
 )
 
 var ackMessage = &pb.Message{Message: []byte("ACK")}
 
-type ConsumerGrouper interface {
-	Add(*consumer.Consumer) error
-	Remove(*consumer.Consumer) error
-	ProcessMessage(*pb.Message) error
-	All() []*consumer.Consumer
-}
-
 type cablesServer struct {
 	pb.UnimplementedCablesServiceServer
-	consumerGroups map[string]ConsumerGrouper
+	consumerGroups map[string]*consumer.ConsumerGroup
+	grpcServer     *grpc.Server
+	netListener    net.Listener
 }
 
 func (s *cablesServer) allConsumers() []*consumer.Consumer {
@@ -33,7 +31,7 @@ func (s *cablesServer) allConsumers() []*consumer.Consumer {
 	return consumers
 }
 
-func (s *cablesServer) processClientConfig(config *cables.CablesClientConfig, stream pb.CablesService_HookServer) error {
+func (s *cablesServer) processClientConfig(config *CablesClientConfig, stream pb.CablesService_HookServer) error {
 	if config.CanConsume {
 		newConsumer := &consumer.Consumer{
 			Name:          config.ClientName,
@@ -42,13 +40,8 @@ func (s *cablesServer) processClientConfig(config *cables.CablesClientConfig, st
 			ReturnStream:  stream,
 		}
 
-		if s.consumerGroups[config.ConsumerGroup] == nil {
-			switch config.ConsumerGroupType {
-			case 0:
-				s.consumerGroups[config.ConsumerGroup] = consumer.NewConsumerGroupClassic(config.ConsumerGroup, config.ConsumeTopics)
-			case 1:
-				s.consumerGroups[config.ConsumerGroup] = consumer.NewConsumerGroupQueue(config.ConsumerGroup)
-			}
+		if _, ok := s.consumerGroups[config.ConsumerGroup]; !ok {
+			s.consumerGroups[config.ConsumerGroup] = consumer.NewConsumerGroup(config.ConsumerGroup, config.ConsumeTopics)
 		}
 		return s.consumerGroups[config.ConsumerGroup].Add(newConsumer)
 	}
@@ -64,6 +57,10 @@ func (s *cablesServer) Cleanup() {
 	}
 }
 
+func (s *cablesServer) Serve() error {
+	return s.grpcServer.Serve(s.netListener)
+}
+
 func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
 	defer s.Cleanup()
 	configMessage, errConfig := stream.Recv()
@@ -71,7 +68,7 @@ func (s *cablesServer) Hook(stream pb.CablesService_HookServer) error {
 		return errConfig
 	}
 
-	var config cables.CablesClientConfig
+	var config CablesClientConfig
 	errUnmarshal := json.Unmarshal(configMessage.GetMessage(), &config)
 	if errUnmarshal != nil {
 		return errUnmarshal
@@ -115,8 +112,20 @@ func (s *cablesServer) ProcessPublished(message *pb.Message) error {
 	return nil
 }
 
-func NewCablesServer() *cablesServer {
-	return &cablesServer{
-		consumerGroups: map[string]ConsumerGrouper{},
+func NewCablesServer(port int) *cablesServer {
+	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
 	}
+	var opts []grpc.ServerOption
+	grpcServer := grpc.NewServer(opts...)
+
+	s := &cablesServer{
+		netListener:    lis,
+		grpcServer:     grpcServer,
+		consumerGroups: map[string]*consumer.ConsumerGroup{},
+	}
+	pb.RegisterCablesServiceServer(grpcServer, s)
+
+	return s
 }
